@@ -30,7 +30,7 @@ async function verifyBackend(apiUrl: string): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(`${apiUrl}/api/health`, { signal: controller.signal, cache: 'no-store' });
+    const res = await fetch(`${apiUrl}/api/health`, { signal: controller.signal });
     clearTimeout(timer);
     if (!res.ok) return false;
     const data = await res.json();
