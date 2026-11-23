@@ -167,6 +167,13 @@ export default function Songs() {
   const [selectedSongsMap, setSelectedSongsMap] = useState<Map<number, Song>>(new Map());
   const [selectingAllFiltered, setSelectingAllFiltered] = useState(false);
   const [batchRenaming, setBatchRenaming] = useState(false);
+  const [checkingMissing, setCheckingMissing] = useState(false);
+  const [cleaningMissing, setCleaningMissing] = useState(false);
+  const [missingPreview, setMissingPreview] = useState<{
+    totalChecked: number;
+    missingCount: number;
+    items: Array<{ id: number; title: string; filePath: string }>;
+  } | null>(null);
 
   const [songs, setSongs] = useState<Song[]>([]);
   const [total, setTotal] = useState(0);
@@ -387,6 +394,43 @@ export default function Songs() {
       document.removeEventListener('keydown', onKey);
     };
   }, [openMenuId]);
+
+  // 检测失效歌曲（源文件已从磁盘删除）
+  const handleCheckMissingSongs = async () => {
+    setCheckingMissing(true);
+    try {
+      const res = await songsApi.cleanupMissingFiles(true);
+      if (res.missingCount === 0) {
+        showToast('success', `已检查全库 ${res.totalChecked} 首歌曲，所有源文件均正常存在`);
+      } else {
+        setMissingPreview({
+          totalChecked: res.totalChecked,
+          missingCount: res.missingCount,
+          items: res.items,
+        });
+      }
+    } catch {
+      showToast('error', '检测失效歌曲失败');
+    } finally {
+      setCheckingMissing(false);
+    }
+  };
+
+  const handleConfirmCleanupMissing = async () => {
+    setCleaningMissing(true);
+    try {
+      const res = await songsApi.cleanupMissingFiles(false);
+      setMissingPreview(null);
+      clearSelectedSongs();
+      setPage(1);
+      showToast('success', `已从曲库清除 ${res.deletedCount} 首失效歌曲记录及关联缓存`);
+      await fetchSongs({ showLoading: false });
+    } catch {
+      showToast('error', '清理失效歌曲失败');
+    } finally {
+      setCleaningMissing(false);
+    }
+  };
 
   // 手动刷新：保留当前表格内容，仅按钮旋转；强制至少展示 400ms 保证可见
   const handleRefresh = () => {
@@ -940,6 +984,16 @@ export default function Songs() {
       <div className="flex items-center justify-between gap-md">
         <h1 className="text-2xl font-display font-bold text-ink">歌曲管理</h1>
         <div className="flex items-center gap-sm">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleCheckMissingSongs}
+            loading={checkingMissing}
+            leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+            title="检测并清除磁盘上源文件已删除的失效歌曲记录"
+          >
+            清理失效歌曲
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -1918,6 +1972,36 @@ export default function Songs() {
           </div>
         ) : null}
       </Modal>
+
+      {/* 清理失效歌曲确认弹窗 */}
+      <ConfirmModal
+        isOpen={!!missingPreview}
+        title="确认清理失效歌曲"
+        confirmLabel="立即清理"
+        loading={cleaningMissing}
+        onConfirm={handleConfirmCleanupMissing}
+        onCancel={() => setMissingPreview(null)}
+        message={
+          missingPreview ? (
+            <>
+              已检查全库 {missingPreview.totalChecked} 首歌曲，发现{' '}
+              <strong className="text-danger">{missingPreview.missingCount}</strong>{' '}
+              首歌曲的磁盘源文件已不存在
+              {missingPreview.items.length > 0 && (
+                <>
+                  （如
+                  {missingPreview.items
+                    .slice(0, 3)
+                    .map((i) => `《${i.title}》`)
+                    .join('、')}
+                  {missingPreview.missingCount > 3 ? ' 等' : ''}）
+                </>
+              )}
+              。确定要从歌曲库中清除这些失效记录及关联分离缓存吗？
+            </>
+          ) : null
+        }
+      />
 
       <ToastContainer />
     </div>

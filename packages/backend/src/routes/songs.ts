@@ -281,6 +281,23 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response, nex
 
 
 /**
+ * POST /songs/cleanup-missing - 检测或清理磁盘上源文件已删除/不存在的失效歌曲记录
+ */
+router.post('/cleanup-missing', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const dryRun = Boolean(req.body?.dryRun);
+    const result = await songService.cleanupMissingSongFiles({ dryRun });
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(
+      error instanceof Error && 'statusCode' in error
+        ? error
+        : createAppError('Failed to cleanup missing songs', 500),
+    );
+  }
+});
+
+/**
  * POST /songs/batch-rename - 批量按「歌手-标题.xxx」重命名歌曲原文件
  */
 router.post('/batch-rename', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {

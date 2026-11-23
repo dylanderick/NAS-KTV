@@ -693,3 +693,122 @@ export async function renameSongFileToArtistTitle(songId: number): Promise<Renam
     lyricsPath: updatedLyricsPath,
   };
 }
+
+
+export interface MissingSongItem {
+  id: number;
+  title: string;
+  filePath: string;
+}
+
+export interface CleanupMissingSongsResult {
+  totalChecked: number;
+  missingCount: number;
+  deletedCount: number;
+  items: MissingSongItem[];
+}
+
+/**
+ * 检测并清理磁盘上源文件已不存在的失效歌曲记录（同时清理分离产物与孤立歌手/分类计数）
+ * @param opts.dryRun 仅检测不删除（用于前端弹窗二次确认展示数量与示例）
+ */
+export async function cleanupMissingSongFiles(opts?: {
+  dryRun?: boolean;
+}): Promise<CleanupMissingSongsResult> {
+  const dryRun = Boolean(opts?.dryRun);
+  const allSongs = db
+    .select({
+      id: songs.id,
+      title: songs.title,
+      filePath: songs.filePath,
+      artistId: songs.artistId,
+    })
+    .from(songs)
+    .all();
+
+  const missing: MissingSongItem[] = [];
+  const affectedArtistIds = new Set<number>();
+
+  for (const s of allSongs) {
+    const fp = (s.filePath || '').trim();
+    if (!fp || !fs.existsSync(fp)) {
+      missing.push({
+        id: s.id,
+        title: s.title,
+        filePath: fp,
+      });
+      if (s.artistId != null) {
+        affectedArtistIds.add(s.artistId);
+      }
+    }
+  }
+
+  if (dryRun || missing.length === 0) {
+    return {
+      totalChecked: allSongs.length,
+      missingCount: missing.length,
+      deletedCount: 0,
+      items: missing.slice(0, 20),
+    };
+  }
+
+  const missingIds = missing.map((m) => m.id);
+  const artistLinks = db
+    .select({ artistId: songArtists.artistId })
+    .from(songArtists)
+    .where(inArray(songArtists.songId, missingIds))
+    .all();
+  for (const row of artistLinks) {
+    if (row.artistId != null) affectedArtistIds.add(row.artistId);
+  }
+
+  let deletedCount = 0;
+  for (const item of missing) {
+    try {
+      await deleteSong(item.id);
+      deletedCount++;
+    } catch (err) {
+      logger.error({ err, songId: item.id }, 'Failed to delete missing song record');
+    }
+  }
+
+  // 刷新受影响歌手的歌曲计数并清理无歌曲关联的自动歌手
+  for (const aid of affectedArtistIds) {
+    try {
+      const cnt = countArtistSongs(aid);
+      db.update(artists).set({ songCount: cnt }).where(eq(artists.id, aid)).run();
+      if (cnt === 0) {
+        await deleteArtistIfOrphan(aid);
+      }
+    } catch (err) {
+      logger.warn({ err, artistId: aid }, 'Failed to refresh artist after missing song cleanup');
+    }
+  }
+
+  // 刷新所有分类项的歌曲计数
+  try {
+    const allItems = db.select({ id: categoryItems.id }).from(categoryItems).all();
+    for (const ci of allItems) {
+      const cnt =
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(songCategories)
+          .where(eq(songCategories.categoryItemId, ci.id))
+          .get()?.count ?? 0;
+      db.update(categoryItems).set({ songCount: cnt }).where(eq(categoryItems.id, ci.id)).run();
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Failed to refresh category counts after missing song cleanup');
+  }
+
+  logger.info(
+    `Cleaned up missing song files: checked=${allSongs.length}, missing=${missing.length}, deleted=${deletedCount}`,
+  );
+
+  return {
+    totalChecked: allSongs.length,
+    missingCount: missing.length,
+    deletedCount,
+    items: missing.slice(0, 20),
+  };
+}

@@ -122,4 +122,22 @@ export const songsApi = {
         }>
       >('/songs/batch-rename', { songIds })
       .then((res) => res.data.data),
+  cleanupMissingFiles: (
+    dryRun = false,
+  ): Promise<{
+    totalChecked: number;
+    missingCount: number;
+    deletedCount: number;
+    items: Array<{ id: number; title: string; filePath: string }>;
+  }> =>
+    client
+      .post<
+        ApiResponse<{
+          totalChecked: number;
+          missingCount: number;
+          deletedCount: number;
+          items: Array<{ id: number; title: string; filePath: string }>;
+        }>
+      >('/songs/cleanup-missing', { dryRun })
+      .then((res) => res.data.data),
 };
