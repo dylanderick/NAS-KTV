@@ -10,4 +10,4 @@ ALTER TABLE ai_parse_tasks ADD COLUMN review_action TEXT;--> statement-breakpoin
 ALTER TABLE ai_parse_tasks ADD COLUMN reviewed_by TEXT;--> statement-breakpoint
 ALTER TABLE ai_parse_tasks ADD COLUMN reviewed_at INTEGER;--> statement-breakpoint
 ALTER TABLE ai_parse_tasks ADD COLUMN review_note TEXT;--> statement-breakpoint
-ALTER TABLE songs ADD COLUMN ai_manual_edited INTEGER DEFAULT 0;--> statement-breakpoint
+ALTER TABLE songs ADD COLUMN ai_manual_edited INTEGER DEFAULT 0;

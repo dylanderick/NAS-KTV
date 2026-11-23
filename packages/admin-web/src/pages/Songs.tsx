@@ -25,7 +25,16 @@ import { aiParseApi } from '../api/ai-parse';
 import { separationApi } from '../api/separation';
 import { artistsApi } from '../api/artists';
 import { categoriesApi } from '../api/categories';
-import type { Song, Artist, CategoryGroup } from '../types';
+import type {
+  Song,
+  Artist,
+  CategoryGroup,
+  AiParseFilterStatus,
+  SeparationFilterStatus,
+  TranscodeFilterStatus,
+  FileTypeFilter,
+  LyricsFilterStatus,
+} from '../types';
 
 function formatDuration(sec: number): string {
   const s = Math.max(0, Math.floor(sec || 0));
@@ -148,6 +157,16 @@ export default function Songs() {
   // 歌手筛选（从歌手管理页跳转进入时由 URL 初始化：artistId + artistName）
   const [artistId, setArtistId] = useState<number | null>(null);
   const [artistName, setArtistName] = useState('');
+  // 全库状态筛选（后端 SQL 级筛选，覆盖全部歌曲而非单页）
+  const [aiParseFilter, setAiParseFilter] = useState<AiParseFilterStatus>('');
+  const [separationFilter, setSeparationFilter] = useState<SeparationFilterStatus>('');
+  const [transcodeFilter, setTranscodeFilter] = useState<TranscodeFilterStatus>('');
+  const [fileTypeFilter, setFileTypeFilter] = useState<FileTypeFilter>('');
+  const [lyricsFilter, setLyricsFilter] = useState<LyricsFilterStatus>('');
+  // 跨页选中歌曲缓存（id -> Song），支持跨页多选与「全选当前筛选全部歌曲」
+  const [selectedSongsMap, setSelectedSongsMap] = useState<Map<number, Song>>(new Map());
+  const [selectingAllFiltered, setSelectingAllFiltered] = useState(false);
+  const [batchRenaming, setBatchRenaming] = useState(false);
 
   const [songs, setSongs] = useState<Song[]>([]);
   const [total, setTotal] = useState(0);
@@ -282,16 +301,41 @@ export default function Songs() {
           keyword: keyword.trim() || undefined,
           artistId: artistId ?? undefined,
           categoryItemIds: selectedCategoryItemIds.size > 0 ? Array.from(selectedCategoryItemIds) : undefined,
+          aiParseStatus: aiParseFilter || undefined,
+          separationStatus: separationFilter || undefined,
+          transcodeStatus: transcodeFilter || undefined,
+          fileType: fileTypeFilter || undefined,
+          lyricsStatus: lyricsFilter || undefined,
         });
         setSongs(data.items);
         setTotal(data.total);
+        setSelectedSongsMap((prev) => {
+          if (prev.size === 0) return prev;
+          const next = new Map(prev);
+          for (const item of data.items) {
+            if (next.has(item.id)) next.set(item.id, item);
+          }
+          return next;
+        });
       } catch {
         showToast('error', '加载歌曲列表失败');
       } finally {
         if (showLoading) setLoading(false);
       }
     },
-    [page, pageSize, keyword, artistId, selectedCategoryItemIds, showToast]
+    [
+      page,
+      pageSize,
+      keyword,
+      artistId,
+      selectedCategoryItemIds,
+      aiParseFilter,
+      separationFilter,
+      transcodeFilter,
+      fileTypeFilter,
+      lyricsFilter,
+      showToast,
+    ]
   );
 
   useEffect(() => {
@@ -366,6 +410,16 @@ export default function Songs() {
     async (toDelete: Song[]) => {
       try {
         await Promise.all(toDelete.map((s) => songsApi.delete(s.id)));
+        setSelectedIds((prev) => {
+          const n = new Set(prev);
+          toDelete.forEach((s) => n.delete(s.id));
+          return n;
+        });
+        setSelectedSongsMap((prev) => {
+          const n = new Map(prev);
+          toDelete.forEach((s) => n.delete(s.id));
+          return n;
+        });
         showToast('success', `已删除 ${toDelete.length} 首歌曲`);
       } catch {
         showToast('error', '部分删除失败，请刷新页面');
@@ -397,22 +451,71 @@ export default function Songs() {
         songs.forEach((s) => n.delete(s.id));
         return n;
       });
+      setSelectedSongsMap((prev) => {
+        const n = new Map(prev);
+        songs.forEach((s) => n.delete(s.id));
+        return n;
+      });
     } else {
       setSelectedIds((prev) => {
         const n = new Set(prev);
         songs.forEach((s) => n.add(s.id));
         return n;
       });
+      setSelectedSongsMap((prev) => {
+        const n = new Map(prev);
+        songs.forEach((s) => n.set(s.id, s));
+        return n;
+      });
     }
   };
 
   const toggleOne = (id: number) => {
+    const target = songs.find((s) => s.id === id);
     setSelectedIds((prev) => {
       const n = new Set(prev);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
+    setSelectedSongsMap((prev) => {
+      const n = new Map(prev);
+      if (n.has(id)) n.delete(id);
+      else if (target) n.set(id, target);
+      return n;
+    });
+  };
+
+  // 全选当前筛选条件下的全库所有匹配歌曲（跨全部分页）
+  const selectAllFilteredSongs = async () => {
+    if (total <= 0) return;
+    setSelectingAllFiltered(true);
+    try {
+      const data = await songsApi.list({
+        page: 1,
+        pageSize: Math.max(total, 10000),
+        keyword: keyword.trim() || undefined,
+        artistId: artistId ?? undefined,
+        categoryItemIds: selectedCategoryItemIds.size > 0 ? Array.from(selectedCategoryItemIds) : undefined,
+        aiParseStatus: aiParseFilter || undefined,
+        separationStatus: separationFilter || undefined,
+        transcodeStatus: transcodeFilter || undefined,
+        fileType: fileTypeFilter || undefined,
+        lyricsStatus: lyricsFilter || undefined,
+      });
+      setSelectedIds(new Set(data.items.map((s) => s.id)));
+      setSelectedSongsMap(new Map(data.items.map((s) => [s.id, s])));
+      showToast('success', `已全选当前筛选的全部 ${data.items.length} 首歌曲`);
+    } catch {
+      showToast('error', '全选筛选结果失败');
+    } finally {
+      setSelectingAllFiltered(false);
+    }
+  };
+
+  const clearSelectedSongs = () => {
+    setSelectedIds(new Set());
+    setSelectedSongsMap(new Map());
   };
 
   // Edit
@@ -706,9 +809,55 @@ export default function Songs() {
     }
   };
 
-  // Batch operations
-  const selectedSongs = songs.filter((s) => selectedIds.has(s.id));
+  // 单首按「歌手-标题.xxx」重命名原文件
+  const triggerRenameFile = async (song: Song) => {
+    setBusyIds((prev) => new Set(prev).add(song.id));
+    try {
+      const res = await songsApi.renameFile(song.id);
+      if (res.renamed) {
+        patchSong(song.id, { filePath: res.filePath, lyricsPath: res.lyricsPath });
+        showToast('success', `已重命名为：${splitFilePath(res.filePath).name}`);
+      } else if (res.reason === 'already_named') {
+        showToast('success', `文件名已是「歌手-标题」格式：${splitFilePath(res.filePath).name}`);
+      } else if (res.reason === 'missing_artist_or_title') {
+        showToast('warning', '歌手为空或为「未知歌手」，请先完成 AI 解析或填写歌手后再重命名');
+      } else {
+        showToast('warning', `未重命名（${res.reason || '源文件不存在'}）`);
+      }
+    } catch {
+      showToast('error', '重命名源文件失败');
+    } finally {
+      setBusyIds((prev) => {
+        const n = new Set(prev);
+        n.delete(song.id);
+        return n;
+      });
+    }
+  };
+
+  // Batch operations（支持跨页选中的全部歌曲）
+  const selectedSongs: Song[] = Array.from(selectedIds)
+    .map((id) => songs.find((s) => s.id === id) ?? selectedSongsMap.get(id))
+    .filter((s): s is Song => Boolean(s));
   const batchCount = selectedIds.size;
+
+  const batchRenameFiles = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBatchRenaming(true);
+    try {
+      const res = await songsApi.batchRenameFiles(ids);
+      showToast(
+        'success',
+        `重命名完成：成功 ${res.renamed} 首${res.skipped > 0 ? `，跳过/已是标准格式 ${res.skipped} 首` : ''}`,
+      );
+      await fetchSongs({ showLoading: false });
+    } catch {
+      showToast('error', '批量重命名源文件失败');
+    } finally {
+      setBatchRenaming(false);
+    }
+  };
 
   const batchDelete = () => {
     if (selectedSongs.length === 0) return;
@@ -767,13 +916,23 @@ export default function Songs() {
     setArtistId(null);
     setArtistName('');
     setSelectedCategoryItemIds(new Set());
+    setAiParseFilter('');
+    setSeparationFilter('');
+    setTranscodeFilter('');
+    setFileTypeFilter('');
+    setLyricsFilter('');
     setPage(1);
   };
 
   const hasActiveFilter =
     keyword.trim().length > 0 ||
     artistId != null ||
-    selectedCategoryItemIds.size > 0;
+    selectedCategoryItemIds.size > 0 ||
+    aiParseFilter !== '' ||
+    separationFilter !== '' ||
+    transcodeFilter !== '' ||
+    fileTypeFilter !== '' ||
+    lyricsFilter !== '';
 
   return (
     <div className="p-lg space-y-lg">
@@ -846,9 +1005,113 @@ export default function Songs() {
         </div>
       )}
 
-      {/* Category filter bar */}
-      {categoryGroups.length > 0 && (
+      {/* 全库状态与分类筛选栏（后端 SQL 级全库过滤，跨全部分页生效） */}
+      {(
         <div className="bg-paper-2 border border-border rounded-lg p-md space-y-sm">
+          {(
+            [
+              {
+                label: 'AI 解析',
+                value: aiParseFilter,
+                onChange: (v: string) => {
+                  setAiParseFilter(v as AiParseFilterStatus);
+                  setPage(1);
+                },
+                options: [
+                  { value: '', label: '全部' },
+                  { value: 'unparsed', label: '未解析' },
+                  { value: 'parsed', label: '已解析' },
+                  { value: 'need_review', label: '待审核' },
+                  { value: 'manual_edited', label: '已解析·人工修改' },
+                  { value: 'reviewed', label: '已审阅' },
+                ],
+              },
+              {
+                label: '人声分离',
+                value: separationFilter,
+                onChange: (v: string) => {
+                  setSeparationFilter(v as SeparationFilterStatus);
+                  setPage(1);
+                },
+                options: [
+                  { value: '', label: '全部' },
+                  { value: 'none', label: '未开始' },
+                  { value: 'processing', label: '处理中' },
+                  { value: 'completed', label: '已完成' },
+                  { value: 'failed', label: '失败' },
+                ],
+              },
+              {
+                label: '视频转码',
+                value: transcodeFilter,
+                onChange: (v: string) => {
+                  setTranscodeFilter(v as TranscodeFilterStatus);
+                  setPage(1);
+                },
+                options: [
+                  { value: '', label: '全部' },
+                  { value: 'none', label: '未转码' },
+                  { value: 'pending', label: '待处理' },
+                  { value: 'processing', label: '处理中' },
+                  { value: 'completed', label: '已完成' },
+                  { value: 'failed', label: '失败' },
+                ],
+              },
+              {
+                label: '文件类型',
+                value: fileTypeFilter,
+                onChange: (v: string) => {
+                  setFileTypeFilter(v as FileTypeFilter);
+                  setPage(1);
+                },
+                options: [
+                  { value: '', label: '全部' },
+                  { value: 'audio', label: '音频' },
+                  { value: 'video', label: '视频 (MV)' },
+                ],
+              },
+              {
+                label: '歌词状态',
+                value: lyricsFilter,
+                onChange: (v: string) => {
+                  setLyricsFilter(v as LyricsFilterStatus);
+                  setPage(1);
+                },
+                options: [
+                  { value: '', label: '全部' },
+                  { value: 'has_lyrics', label: '有歌词' },
+                  { value: 'no_lyrics', label: '无歌词' },
+                ],
+              },
+            ] as const
+          ).map((row) => (
+            <div key={row.label} className="flex items-start gap-sm">
+              <span className="text-xs font-medium text-ink-2 pt-1.5 shrink-0 w-16 text-right">
+                {row.label}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {row.options.map((opt) => {
+                  const isSelected = row.value === opt.value;
+                  return (
+                    <button
+                      key={opt.value || 'all'}
+                      onClick={() => row.onChange(opt.value)}
+                      className={[
+                        'px-3 py-1 rounded-full text-xs font-medium transition-all duration-150 ease-out',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 focus-visible:ring-offset-paper-2',
+                        isSelected
+                          ? 'bg-accent text-accent-fg shadow-sm'
+                          : 'bg-paper-3 text-ink-2 hover:bg-paper hover:text-ink',
+                      ].join(' ')}
+                      aria-pressed={isSelected}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
           {categoryGroups.map((group) => {
             const items = group.items ?? [];
             if (items.length === 0) return null;
@@ -856,7 +1119,7 @@ export default function Songs() {
             const hasGroupSelection = groupItemIds.some(id => selectedCategoryItemIds.has(id));
             return (
               <div key={group.id} className="flex items-start gap-sm">
-                <span className="text-xs font-medium text-ink-2 pt-1.5 shrink-0 w-12 text-right">
+                <span className="text-xs font-medium text-ink-2 pt-1.5 shrink-0 w-16 text-right">
                   {group.name}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
@@ -933,7 +1196,22 @@ export default function Songs() {
       {/* Batch operations */}
       {batchCount > 0 && (
         <div className="flex flex-wrap items-center gap-sm bg-accent-soft border border-border rounded-lg p-md">
-          <span className="text-sm text-ink-2">已选 {batchCount} 项</span>
+          <span className="text-sm text-ink-2">
+            已选 <strong className="text-ink">{batchCount}</strong> / {total} 项
+          </span>
+          {total > batchCount && (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={selectingAllFiltered}
+              onClick={selectAllFilteredSongs}
+            >
+              全选当前筛选的全部 {total} 首
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={clearSelectedSongs}>
+            取消选择
+          </Button>
           <div className="flex-1" />
           <Button
             size="sm"
@@ -950,6 +1228,15 @@ export default function Songs() {
             leftIcon={<Bot className="w-4 h-4" />}
           >
             批量 AI 解析
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={batchRenaming}
+            onClick={batchRenameFiles}
+            leftIcon={<FileText className="w-4 h-4" />}
+          >
+            批量重命名源文件
           </Button>
           <Button
             size="sm"
@@ -1064,7 +1351,15 @@ export default function Songs() {
                         />
                       </td>
                       <td className="p-md text-sm text-ink font-medium">
-                        {song.title || '—'}
+                        <div>{song.title || '—'}</div>
+                        {song.filePath && (
+                          <div
+                            className="text-xs text-ink-3 font-mono truncate max-w-[260px]"
+                            title={song.filePath}
+                          >
+                            {splitFilePath(song.filePath).name}
+                          </div>
+                        )}
                       </td>
                       <td className="p-md text-sm text-ink-2">
                         {song.artistNames?.length
@@ -1175,6 +1470,7 @@ export default function Songs() {
                               onClose={() => { setOpenMenuId(-1); openMenuButtonRef.current = null; }}
                               onLyrics={() => { openLyrics(song); setOpenMenuId(-1); }}
                               onAiParse={() => { setPendingAiParse(song); setOpenMenuId(-1); }}
+                              onRenameFile={() => { triggerRenameFile(song); setOpenMenuId(-1); }}
                               onReview={() => { openReview(song); setOpenMenuId(-1); }}
                               onSeparation={() => { setPendingSeparation(song); setOpenMenuId(-1); }}
                               onTranscode={() => { setPendingTranscode(song); setOpenMenuId(-1); }}
@@ -1637,6 +1933,7 @@ function RowMoreMenu({
   onClose,
   onLyrics,
   onAiParse,
+  onRenameFile,
   onReview,
   onSeparation,
   onTranscode,
@@ -1647,6 +1944,7 @@ function RowMoreMenu({
   onClose: () => void;
   onLyrics: () => void;
   onAiParse: () => void;
+  onRenameFile: () => void;
   onReview: () => void;
   onSeparation: () => void;
   onTranscode: () => void;
@@ -1764,6 +2062,15 @@ function RowMoreMenu({
       <button role="menuitem" onClick={onAiParse} className={itemCls}>
         <Bot className="w-4 h-4" />
         AI 解析
+      </button>
+      <button
+        role="menuitem"
+        onClick={onRenameFile}
+        className={itemCls}
+        title="按「歌手-标题.后缀」重命名歌曲原文件"
+      >
+        <Pencil className="w-4 h-4" />
+        重命名源文件
       </button>
       {song.aiParsed === 2 && song.aiNeedReview === 1 && (
         <button

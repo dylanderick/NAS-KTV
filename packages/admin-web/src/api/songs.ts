@@ -84,4 +84,42 @@ export const songsApi = {
     client
       .delete<ApiResponse<null>>(`/songs/${id}/lyrics`)
       .then(() => undefined),
+  renameFile: (
+    id: number,
+  ): Promise<{
+    songId: number;
+    renamed: boolean;
+    oldFilePath: string;
+    filePath: string;
+    lyricsPath: string | null;
+    reason?: string;
+  }> =>
+    client
+      .post<
+        ApiResponse<{
+          songId: number;
+          renamed: boolean;
+          oldFilePath: string;
+          filePath: string;
+          lyricsPath: string | null;
+          reason?: string;
+        }>
+      >(`/songs/${id}/rename-file`)
+      .then((res) => res.data.data),
+  batchRenameFiles: (
+    songIds: number[],
+  ): Promise<{
+    total: number;
+    renamed: number;
+    skipped: number;
+  }> =>
+    client
+      .post<
+        ApiResponse<{
+          total: number;
+          renamed: number;
+          skipped: number;
+        }>
+      >('/songs/batch-rename', { songIds })
+      .then((res) => res.data.data),
 };

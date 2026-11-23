@@ -26,6 +26,7 @@
     "helmet": "^7.1.0",
     "iconv-lite": "^0.6.3",
     "jsonwebtoken": "^9.0.2",
+    "load-esm": "1.0.3",
     "multer": "^2.2.0",
     "music-metadata": "^10.6.3",
     "openai": "^4.50.0",

@@ -60,7 +60,25 @@ router.get('/', async (req: Request, res: Response) => {
         .filter((n) => !isNaN(n));
     }
 
-    const result = await songService.getSongs({ page, pageSize, keyword, artistId, categoryItemIds, categoryId });
+    const aiParseStatus = (req.query.aiParseStatus as songService.AiParseFilterStatus | undefined) || undefined;
+    const separationStatus = (req.query.separationStatus as songService.SeparationFilterStatus | undefined) || undefined;
+    const transcodeStatus = (req.query.transcodeStatus as songService.TranscodeFilterStatus | undefined) || undefined;
+    const fileType = (req.query.fileType as songService.FileTypeFilter | undefined) || undefined;
+    const lyricsStatus = (req.query.lyricsStatus as songService.LyricsFilterStatus | undefined) || undefined;
+
+    const result = await songService.getSongs({
+      page,
+      pageSize,
+      keyword,
+      artistId,
+      categoryItemIds,
+      categoryId,
+      aiParseStatus,
+      separationStatus,
+      transcodeStatus,
+      fileType,
+      lyricsStatus,
+    });
     res.json({ success: true, data: result });
   } catch (error) {
     throw createAppError('Failed to fetch songs', 500);
@@ -258,6 +276,69 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response, nex
     next(error instanceof Error && 'statusCode' in error
       ? error
       : createAppError('Failed to delete song', 500));
+  }
+});
+
+
+/**
+ * POST /songs/batch-rename - 批量按「歌手-标题.xxx」重命名歌曲原文件
+ */
+router.post('/batch-rename', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const songIds: number[] = Array.isArray(req.body?.songIds)
+      ? req.body.songIds.map(Number).filter((n: number) => Number.isFinite(n) && n > 0)
+      : [];
+    if (songIds.length === 0) {
+      throw createAppError('songIds array is required', 400);
+    }
+
+    const items: songService.RenameSongFileResult[] = [];
+    let renamed = 0;
+    let skipped = 0;
+    for (const id of songIds) {
+      const r = await songService.renameSongFileToArtistTitle(id);
+      items.push(r);
+      if (r.renamed) renamed++;
+      else skipped++;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        total: songIds.length,
+        renamed,
+        skipped,
+        items,
+      },
+    });
+  } catch (error) {
+    next(
+      error instanceof Error && 'statusCode' in error
+        ? error
+        : createAppError('Failed to batch rename song files', 500),
+    );
+  }
+});
+
+/**
+ * POST /songs/:id/rename-file - 单首按「歌手-标题.xxx」重命名歌曲原文件
+ */
+router.post('/:id/rename-file', authenticateToken, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = parseInt(req.params.id);
+    const existingSong = await songService.getSongById(id);
+    if (!existingSong) {
+      throw createAppError('Song not found', 404);
+    }
+
+    const result = await songService.renameSongFileToArtistTitle(id);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(
+      error instanceof Error && 'statusCode' in error
+        ? error
+        : createAppError('Failed to rename song file', 500),
+    );
   }
 });
 

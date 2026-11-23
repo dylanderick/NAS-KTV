@@ -108,7 +108,12 @@ async function main() {
     // axios/fetch 将 304 视为错误导致前端误判「后端不可达」
     app.disable('etag');
 
-    app.use(helmet());
+    // 允许跨源嵌入与访问（兼容 Tauri WebView 及老版 Android System WebView 如 Chrome 83 的 CORP 检查）
+    app.use(
+      helmet({
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
+      }),
+    );
     app.use(cors());
     app.use(express.json());
     app.use(requestLogger);

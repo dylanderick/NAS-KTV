@@ -1,10 +1,11 @@
 import { eq, like, and, sql, desc, inArray } from 'drizzle-orm';
+import fs from 'fs';
 import { rm } from 'fs/promises';
 import path from 'path';
 import { db, schema } from '../db';
 import { config } from '../config';
 import logger from '../logger';
-import { deleteArtistIfOrphan } from './song-info-parser';
+import { deleteArtistIfOrphan, UNKNOWN_ARTIST_NAME } from './song-info-parser';
 
 const { songs, artists, songCategories, categoryItems, songArtists } = schema;
 
@@ -55,6 +56,29 @@ export function getArtistNamesBySong(songIds: number[]): Map<number, string[]> {
   return map;
 }
 
+export type AiParseFilterStatus =
+  | 'unparsed'
+  | 'parsed'
+  | 'need_review'
+  | 'manual_edited'
+  | 'reviewed';
+
+export type SeparationFilterStatus =
+  | 'none'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+
+export type TranscodeFilterStatus =
+  | 'none'
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+
+export type FileTypeFilter = 'audio' | 'video';
+export type LyricsFilterStatus = 'has_lyrics' | 'no_lyrics';
+
 export interface GetSongsParams {
   page?: number;
   pageSize?: number;
@@ -63,10 +87,32 @@ export interface GetSongsParams {
   categoryItemIds?: number[];
   /** 分类组 ID：筛选该分类组下所有分类项关联的歌曲 */
   categoryId?: number;
+  /** AI 解析状态（全库筛选） */
+  aiParseStatus?: AiParseFilterStatus;
+  /** 人声分离状态（全库筛选） */
+  separationStatus?: SeparationFilterStatus;
+  /** 视频转码状态（全库筛选） */
+  transcodeStatus?: TranscodeFilterStatus;
+  /** 媒体文件类型（audio / video，全库筛选） */
+  fileType?: FileTypeFilter;
+  /** 歌词状态（has_lyrics / no_lyrics，全库筛选） */
+  lyricsStatus?: LyricsFilterStatus;
 }
 
 export async function getSongs(params: GetSongsParams) {
-  const { page = 1, pageSize = 20, keyword, artistId, categoryItemIds, categoryId } = params;
+  const {
+    page = 1,
+    pageSize = 20,
+    keyword,
+    artistId,
+    categoryItemIds,
+    categoryId,
+    aiParseStatus,
+    separationStatus,
+    transcodeStatus,
+    fileType,
+    lyricsStatus,
+  } = params;
   const offset = (page - 1) * pageSize;
 
   const conditions = [];
@@ -111,6 +157,81 @@ export async function getSongs(params: GetSongsParams) {
         WHERE sc.song_id = ${sql.raw('songs.id')} AND ci.category_id = ${categoryId}
       )`
     );
+  }
+
+  if (aiParseStatus) {
+    switch (aiParseStatus) {
+      case 'unparsed':
+        conditions.push(sql`(${songs.aiParsed} IS NULL OR ${songs.aiParsed} = 0)`);
+        break;
+      case 'parsed':
+        conditions.push(eq(songs.aiParsed, 1));
+        break;
+      case 'need_review':
+        conditions.push(sql`(${songs.aiParsed} = 2 AND ${songs.aiNeedReview} = 1)`);
+        break;
+      case 'manual_edited':
+        conditions.push(sql`(${songs.aiParsed} = 1 AND ${songs.aiManualEdited} = 1)`);
+        break;
+      case 'reviewed':
+        conditions.push(
+          sql`(${songs.aiParsed} = 2 AND (${songs.aiNeedReview} IS NULL OR ${songs.aiNeedReview} = 0))`,
+        );
+        break;
+    }
+  }
+
+  if (separationStatus) {
+    switch (separationStatus) {
+      case 'none':
+        conditions.push(
+          sql`(${songs.separationStatus} IS NULL OR ${songs.separationStatus} = '' OR ${songs.separationStatus} = 'none' OR ${songs.separationStatus} = 'pending')`,
+        );
+        break;
+      case 'processing':
+        conditions.push(eq(songs.separationStatus, 'processing'));
+        break;
+      case 'completed':
+        conditions.push(eq(songs.separationStatus, 'completed'));
+        break;
+      case 'failed':
+        conditions.push(eq(songs.separationStatus, 'failed'));
+        break;
+    }
+  }
+
+  if (transcodeStatus) {
+    switch (transcodeStatus) {
+      case 'none':
+        conditions.push(
+          sql`(${songs.fileType} = 'video' AND (${songs.transcodeStatus} IS NULL OR ${songs.transcodeStatus} = '' OR ${songs.transcodeStatus} = 'none'))`,
+        );
+        break;
+      case 'pending':
+        conditions.push(eq(songs.transcodeStatus, 'pending'));
+        break;
+      case 'processing':
+        conditions.push(eq(songs.transcodeStatus, 'processing'));
+        break;
+      case 'completed':
+        conditions.push(eq(songs.transcodeStatus, 'completed'));
+        break;
+      case 'failed':
+        conditions.push(eq(songs.transcodeStatus, 'failed'));
+        break;
+    }
+  }
+
+  if (fileType === 'audio' || fileType === 'video') {
+    conditions.push(eq(songs.fileType, fileType));
+  }
+
+  if (lyricsStatus) {
+    if (lyricsStatus === 'has_lyrics') {
+      conditions.push(sql`(${songs.lyricsPath} IS NOT NULL AND length(${songs.lyricsPath}) > 0)`);
+    } else if (lyricsStatus === 'no_lyrics') {
+      conditions.push(sql`(${songs.lyricsPath} IS NULL OR length(${songs.lyricsPath}) = 0)`);
+    }
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
@@ -404,4 +525,171 @@ async function cleanupSeparationOutput(songId: number) {
   } catch (err) {
     logger.warn(`Failed to delete separation output for song ${songId}: ${dir}`, err);
   }
+}
+
+/**
+ * 清洗文件名片段（移除 Linux/Windows/SMB 非法文件名字符）
+ */
+function sanitizeFilenamePart(value: string): string {
+  return value
+    .replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .replace(/^[.\s]+|[.\s]+$/g, '');
+}
+
+export interface RenameSongFileResult {
+  songId: number;
+  renamed: boolean;
+  oldFilePath: string;
+  filePath: string;
+  lyricsPath: string | null;
+  reason?: string;
+}
+
+/**
+ * 按「歌手-标题.xxx」重命名歌曲原文件（及同目录下的同名 .lrc 歌词文件），并同步更新数据库路径。
+ * 多歌手使用「、」连接，如「周杰伦、费玉清-千里之外.mkv」。
+ */
+export async function renameSongFileToArtistTitle(songId: number): Promise<RenameSongFileResult> {
+  const song = db.select().from(songs).where(eq(songs.id, songId)).get();
+  if (!song || !song.filePath) {
+    return {
+      songId,
+      renamed: false,
+      oldFilePath: song?.filePath ?? '',
+      filePath: song?.filePath ?? '',
+      lyricsPath: song?.lyricsPath ?? null,
+      reason: 'song_not_found',
+    };
+  }
+
+  const oldFilePath = song.filePath;
+  const artistMap = getArtistNamesBySong([songId]);
+  let artistNames = artistMap.get(songId) ?? [];
+  if (artistNames.length === 0 && song.artistId) {
+    const primaryArtist = db
+      .select({ name: artists.name })
+      .from(artists)
+      .where(eq(artists.id, song.artistId))
+      .get();
+    if (primaryArtist?.name) {
+      artistNames = [primaryArtist.name];
+    }
+  }
+
+  const validArtists = artistNames
+    .map((n) => sanitizeFilenamePart(n))
+    .filter((n) => n.length > 0 && n !== UNKNOWN_ARTIST_NAME);
+  const cleanTitle = sanitizeFilenamePart(song.title || '');
+
+  if (validArtists.length === 0 || !cleanTitle) {
+    return {
+      songId,
+      renamed: false,
+      oldFilePath,
+      filePath: oldFilePath,
+      lyricsPath: song.lyricsPath ?? null,
+      reason: 'missing_artist_or_title',
+    };
+  }
+
+  const dir = path.dirname(oldFilePath);
+  const ext = path.extname(oldFilePath);
+  const targetBase = `${validArtists.join('、')}-${cleanTitle}`;
+  let newFilePath = path.join(dir, `${targetBase}${ext}`);
+
+  if (newFilePath === oldFilePath) {
+    return {
+      songId,
+      renamed: false,
+      oldFilePath,
+      filePath: oldFilePath,
+      lyricsPath: song.lyricsPath ?? null,
+      reason: 'already_named',
+    };
+  }
+
+  if (!fs.existsSync(oldFilePath)) {
+    return {
+      songId,
+      renamed: false,
+      oldFilePath,
+      filePath: oldFilePath,
+      lyricsPath: song.lyricsPath ?? null,
+      reason: 'file_missing',
+    };
+  }
+
+  // 若目标文件已存在且不是同一个 inode，自动追加序号避免覆盖其他歌曲
+  if (fs.existsSync(newFilePath)) {
+    try {
+      const oldStat = fs.statSync(oldFilePath);
+      const newStat = fs.statSync(newFilePath);
+      if (oldStat.ino !== newStat.ino) {
+        let suffix = 2;
+        while (fs.existsSync(path.join(dir, `${targetBase} (${suffix})${ext}`))) {
+          suffix++;
+        }
+        newFilePath = path.join(dir, `${targetBase} (${suffix})${ext}`);
+      }
+    } catch {
+      // ignore stat error
+    }
+  }
+
+  try {
+    fs.renameSync(oldFilePath, newFilePath);
+  } catch (err) {
+    logger.error({ err, songId, oldFilePath, newFilePath }, 'Failed to rename song source file');
+    return {
+      songId,
+      renamed: false,
+      oldFilePath,
+      filePath: oldFilePath,
+      lyricsPath: song.lyricsPath ?? null,
+      reason: err instanceof Error ? err.message : 'rename_failed',
+    };
+  }
+
+  let updatedLyricsPath = song.lyricsPath ?? null;
+  const finalBase = path.basename(newFilePath, ext);
+  const candidateOldLyrics =
+    updatedLyricsPath && fs.existsSync(updatedLyricsPath)
+      ? updatedLyricsPath
+      : (() => {
+          const siblingLrc = path.join(dir, `${path.basename(oldFilePath, ext)}.lrc`);
+          return fs.existsSync(siblingLrc) ? siblingLrc : null;
+        })();
+
+  if (candidateOldLyrics && path.dirname(candidateOldLyrics) === dir) {
+    const targetLrc = path.join(dir, `${finalBase}.lrc`);
+    if (targetLrc !== candidateOldLyrics && !fs.existsSync(targetLrc)) {
+      try {
+        fs.renameSync(candidateOldLyrics, targetLrc);
+        updatedLyricsPath = targetLrc;
+      } catch (err) {
+        logger.warn({ err, songId, candidateOldLyrics, targetLrc }, 'Failed to rename sidecar lrc file');
+      }
+    } else if (targetLrc === candidateOldLyrics) {
+      updatedLyricsPath = targetLrc;
+    }
+  }
+
+  db.update(songs)
+    .set({
+      filePath: newFilePath,
+      lyricsPath: updatedLyricsPath,
+    })
+    .where(eq(songs.id, songId))
+    .run();
+
+  logger.info(`Renamed song ${songId} file: ${oldFilePath} -> ${newFilePath}`);
+  return {
+    songId,
+    renamed: true,
+    oldFilePath,
+    filePath: newFilePath,
+    lyricsPath: updatedLyricsPath,
+  };
 }

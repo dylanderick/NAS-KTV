@@ -35,6 +35,32 @@ export interface Song {
   categories?: { categoryId: number; categoryName: string; categoryItemId: number; categoryItemName: string }[];
 }
 
+export type AiParseFilterStatus =
+  | ''
+  | 'unparsed'
+  | 'parsed'
+  | 'need_review'
+  | 'manual_edited'
+  | 'reviewed';
+
+export type SeparationFilterStatus =
+  | ''
+  | 'none'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+
+export type TranscodeFilterStatus =
+  | ''
+  | 'none'
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+
+export type FileTypeFilter = '' | 'audio' | 'video';
+export type LyricsFilterStatus = '' | 'has_lyrics' | 'no_lyrics';
+
 export interface SongListParams {
   page?: number;
   pageSize?: number;
@@ -42,6 +68,11 @@ export interface SongListParams {
   artistId?: number;
   categoryItemIds?: number[];
   categoryId?: number;
+  aiParseStatus?: Exclude<AiParseFilterStatus, ''>;
+  separationStatus?: Exclude<SeparationFilterStatus, ''>;
+  transcodeStatus?: Exclude<TranscodeFilterStatus, ''>;
+  fileType?: Exclude<FileTypeFilter, ''>;
+  lyricsStatus?: Exclude<LyricsFilterStatus, ''>;
 }
 
 export interface SongListResponse {

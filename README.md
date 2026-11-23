@@ -14,6 +14,43 @@
 - **多房间支持**：一台 NAS 可同时服务多台电视，房间之间相互隔离。
 - **NAS 本地化部署**：SQLite 单文件存储，Docker Compose 一键部署，数据全量留存在本地。
 
+## 本仓库改进与新增功能（Fork 修改说明）
+
+### 1. 修复 Android TV 端无法连接后端服务（`Network Error` / 无法连接该地址）
+
+- **老版 Android System WebView 跨源 CORP 拦截修复**：
+  - **原因**：TV App 基于 Tauri 2 WebView 运行，页面源为 `http://tauri.localhost`。后端默认启用 `helmet()` 时会返回 `Cross-Origin-Resource-Policy: same-origin` 响应头；部分 Android TV 系统内置的旧版 WebView（如 Android 11 上的 Chromium 83）在跨源 `fetch` / `XMLHttpRequest` 请求中也会严格检查 `Cross-Origin-Resource-Policy`，导致即使 `Access-Control-Allow-Origin: *` 预检通过，响应仍被浏览器内核拦截并报错 `后端不可达：Network Error`。
+  - **修复**：
+    1. 在 `packages/backend/src/index.ts` 中将 Helmet 配置为 `helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } })`。
+    2. 在 `packages/web/nginx.conf` 的 `/api/` 反向代理段中显式添加 `proxy_hide_header Cross-Origin-Resource-Policy;` 与 `add_header Cross-Origin-Resource-Policy cross-origin always;`。
+- **电视端 APK 安装注意事项**：
+  - 32 位架构电视（`armeabi-v7a`）必须安装官方 Release 构建的 `nasktv-tv-armeabi-v7a.apk`，请勿安装被第三方工具重打包且移除 `android.permission.INTERNET` 联网权限的 APK（可通过 `dumpsys package com.nasktv.tvapp` 检查是否包含 `android.permission.INTERNET: granted=true`）。
+- **Docker 部署与运行稳定性修复**：
+  - 修复 `packages/backend/Dockerfile` 与 `packages/backend/src/services/id3.ts` 在生产容器中动态加载 ESM 包 `music-metadata` 的兼容性问题。
+  - 修复 `packages/backend/drizzle/0015_ai_parse_review.sql` 迁移脚本末尾多余分隔符问题，并在 `docker-compose.yml` 中为 `separator` 服务设置 `umask 0002` 以保证分离产物目录权限一致。
+
+### 2. Web 管理后台「歌曲管理」支持全库多维状态筛选与跨页全选
+
+- **后端 SQL 级全库筛选（非单页前端过滤）**：
+  - 扩展 `GET /api/songs`（`packages/backend/src/services/song-service.ts`、`packages/backend/src/routes/songs.ts`）与前端 `packages/admin-web/src/pages/Songs.tsx`，所有筛选条件均在数据库查询层对**全部歌曲**生效：
+    - **AI 解析状态**：全部 / 未解析 / 已解析 / 待审核 / 已解析·人工修改 / 已审阅
+    - **人声分离状态**：全部 / 未开始 / 处理中 / 已完成 / 失败
+    - **视频转码状态**：全部 / 未转码 / 待处理 / 处理中 / 已完成 / 失败
+    - **文件类型**：全部 / 音频 / 视频 (MV)
+    - **歌词状态**：全部 / 有歌词 / 无歌词
+- **跨页勾选与一键全选全库筛选结果**：
+  - 翻页时自动保留已勾选歌曲，并在批量操作栏提供 **「全选当前筛选的全部 N 首」** 按钮，可一键选中当前筛选条件下的所有歌曲（跨所有分页），直接执行批量 AI 解析、批量重命名源文件、批量人声分离、批量转码或批量删除。
+
+### 3. AI 解析后按「歌手-标题.xxx」对歌曲原文件重命名
+
+- **AI 解析完成自动重命名**：
+  - 在 `packages/backend/src/services/ai-parse-service.ts` 的 `applyParseResult` 中，当 AI 解析结果生效（包括高置信度自动应用、以及管理员在审核弹窗点击「通过并应用」或「修改后应用」）时，自动将磁盘上的歌曲原文件重命名为 `歌手-标题.原后缀`（多歌手以 `、` 连接，如 `周杰伦、费玉清-千里之外.mkv`）。
+  - 若同目录下存在同名 `.lrc` 外挂歌词文件，也会同步重命名为 `歌手-标题.lrc`，并自动更新数据库的 `filePath` 与 `lyricsPath`。
+  - 自动过滤文件名非法字符，并在目标文件名已存在（且非同一文件）时自动追加 `(2)`、`(3)` 序号防止覆盖其他歌曲。
+- **手动单首 / 批量重命名源文件**：
+  - 新增后端接口 `POST /api/songs/:id/rename-file`（单首重命名）与 `POST /api/songs/batch-rename`（批量重命名）。
+  - 在「歌曲管理」列表每首歌曲标题下方直接展示当前源文件名，支持在单行「更多操作 → 重命名源文件」或顶部批量操作栏「批量重命名源文件」一键将歌曲原文件按 `歌手-标题.xxx` 规范化重命名。
+
 ## 技术栈
 
 | 层级 | 技术选型 |

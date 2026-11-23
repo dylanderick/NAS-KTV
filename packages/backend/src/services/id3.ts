@@ -1,5 +1,5 @@
 import logger from '../logger';
-import { loadMusicMetadata } from 'music-metadata';
+import { loadEsm } from 'load-esm';
 import * as chardet from 'chardet';
 import * as iconv from 'iconv-lite';
 import * as fs from 'fs/promises';
@@ -24,12 +24,13 @@ export interface AudioTags {
 export const AUDIO_EXTENSIONS = ['.mp3', '.flac', '.m4a', '.wav', '.aac', '.ogg', '.wma'];
 export const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm'];
 
-// music-metadata v10+ 为 ESM-only 包，CJS 下必须通过 loadMusicMetadata 动态加载
-let musicMetadataModule: Awaited<ReturnType<typeof loadMusicMetadata>> | null = null;
+// music-metadata v10+ 为 ESM-only 包；使用 load-esm 在 CommonJS 中动态加载
+type MusicMetadataModule = typeof import('music-metadata');
+let musicMetadataModule: MusicMetadataModule | null = null;
 
 async function getMusicMetadata() {
   if (!musicMetadataModule) {
-    musicMetadataModule = await loadMusicMetadata();
+    musicMetadataModule = await loadEsm<MusicMetadataModule>('music-metadata');
   }
   return musicMetadataModule;
 }

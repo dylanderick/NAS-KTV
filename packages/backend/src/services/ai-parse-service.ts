@@ -10,7 +10,7 @@ import {
   deleteArtistIfOrphan,
   deleteCategoryItemIfOrphan,
 } from './song-info-parser';
-import { countArtistSongs } from './song-service';
+import { countArtistSongs, renameSongFileToArtistTitle } from './song-service';
 
 export interface ParseContext {
   result: AiParseResult;
@@ -261,6 +261,13 @@ class AiParseService {
       }
       // 识别到分类信息：移除扫描时挂的「未知」分类兜底
       await removeUnknownCategory(songId);
+    }
+
+    // AI 解析结果应用后，自动按「歌手-标题.xxx」重命名歌曲原文件（及同名 .lrc 歌词文件）
+    try {
+      await renameSongFileToArtistTitle(songId);
+    } catch (renameErr) {
+      logger.warn({ err: renameErr, songId }, 'Auto rename song file after AI parse failed');
     }
 
     logger.info(`Applied AI parse result to song ${songId}, aiParsed=${aiParsedValue}`);
