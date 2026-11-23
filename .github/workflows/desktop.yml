@@ -74,14 +74,14 @@ jobs:
             node scripts/set-version.mjs
           fi
 
-      - name: Build with tauri-action
-        uses: tauri-apps/tauri-action@v0
+      - name: Build with tauri CLI
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: true
-        with:
-          projectPath: packages/tv-app
-          args: --target ${{ matrix.target }}
+        run: |
+          cd packages/tv-app
+          pnpm exec tauri build --target ${{ matrix.target }}
 
       - name: Upload artifact
         if: always()

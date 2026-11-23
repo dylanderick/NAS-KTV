@@ -16,7 +16,7 @@ import {
 
 export function useRoomSync() {
   const { roomCode, sessionToken, sessionExpiresAt, leave, setUnauthorized } = useRoomStore();
-  const { setQueue, setCurrentItem, setPlayerState, setMicVolume, setCurrentLyricIndex } = useQueueStore();
+  const { setQueue, setCurrentItem, setPlayerState, setMicVolume, setCurrentLyricIndex, setTvQrVisible } = useQueueStore();
   // 服务端按房间分配的队列版本；快照与实时广播共用该基线，避免乱序覆盖。
   const lastQueueVersionRef = useRef(0);
   // 最近处理的播放状态版本号：由服务端单调递增分配。
@@ -120,6 +120,14 @@ export function useRoomSync() {
       });
     });
 
+    // 监听 TV 端右上角二维码显隐状态
+    const unsubQrVis = wsClient.on(WsMessageType.TV_QR_VISIBILITY, (msg) => {
+      const payload = (msg.payload ?? {}) as { visible?: boolean };
+      if (typeof payload.visible === 'boolean') {
+        setTvQrVisible(payload.visible);
+      }
+    });
+
     // 监听房间关闭 → 回到加入页（带原因提示）
     const unsubClosed = wsClient.on(WsMessageType.ROOM_CLOSED, msg => {
       const payload = msg.payload as RoomClosedPayload;
@@ -160,9 +168,10 @@ export function useRoomSync() {
       unsubPlayer();
       unsubLyric();
       unsubMic();
+      unsubQrVis();
       unsubClosed();
       unsubUnauth();
       wsClient.disconnect();
     };
-  }, [roomCode, sessionToken, setQueue, setCurrentItem, setPlayerState, setMicVolume, setCurrentLyricIndex, leave, setUnauthorized]);
+  }, [roomCode, sessionToken, setQueue, setCurrentItem, setPlayerState, setMicVolume, setCurrentLyricIndex, setTvQrVisible, leave, setUnauthorized]);
 }

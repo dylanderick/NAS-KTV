@@ -73,6 +73,8 @@ const roomLyricSyncCache = new Map<string, LyricSyncPayload>();
 // TV 端应用音量后广播，服务端缓存并下发；H5/新连接重连后由服务端补发，
 // 保证当前房间生命周期内麦克风音量状态不丢失、多端显示一致。
 const roomMicVolumeCache = new Map<string, MicVolumeStatePayload>();
+// 房间 TV 端右上角二维码显隐状态缓存（默认 true 显示）
+const roomQrVisibleCache = new Map<string, boolean>();
 
 // 房间播放器状态版本号（roomCode → version）
 // 每次收到 TV 端 PLAYER_STATE 自增后随广播下发，客户端据此丢弃过期状态，
@@ -301,6 +303,18 @@ export function initRoomWsHandler(server: Server): void {
           if (ws.role !== 'mobile' || !ws.sessionToken) return;
           await withRoomControlLock(roomCode, async () => {
             await assertMobileRoomControl(room.id, ws.sessionToken!);
+            const cmdPayload = (msg.payload ?? {}) as { command?: string; value?: unknown };
+            if (cmdPayload.command === 'set_qr_visible' || cmdPayload.command === 'toggle_qr_visible') {
+              const prev = roomQrVisibleCache.get(roomCode) ?? true;
+              const next =
+                cmdPayload.command === 'toggle_qr_visible' ? !prev : Boolean(cmdPayload.value);
+              roomQrVisibleCache.set(roomCode, next);
+              broadcastToRoom(roomCode, {
+                type: WsMessageType.TV_QR_VISIBILITY,
+                payload: { visible: next },
+                timestamp: Date.now(),
+              });
+            }
             broadcastToTv(roomCode, msg, ws);
           });
           return;
@@ -374,6 +388,17 @@ export function initRoomWsHandler(server: Server): void {
         JSON.stringify({
           type: WsMessageType.MIC_VOLUME_STATE,
           payload: micVolume,
+          timestamp: Date.now(),
+        }),
+      );
+    }
+
+    // 补发当前 TV 端二维码显隐状态
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: WsMessageType.TV_QR_VISIBILITY,
+          payload: { visible: roomQrVisibleCache.get(roomCode) ?? true },
           timestamp: Date.now(),
         }),
       );

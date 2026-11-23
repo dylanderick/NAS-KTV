@@ -34,6 +34,8 @@ import type {
   TranscodeFilterStatus,
   FileTypeFilter,
   LyricsFilterStatus,
+  NamingFilterStatus,
+  SongFilterCounts,
 } from '../types';
 
 function formatDuration(sec: number): string {
@@ -163,6 +165,8 @@ export default function Songs() {
   const [transcodeFilter, setTranscodeFilter] = useState<TranscodeFilterStatus>('');
   const [fileTypeFilter, setFileTypeFilter] = useState<FileTypeFilter>('');
   const [lyricsFilter, setLyricsFilter] = useState<LyricsFilterStatus>('');
+  const [namingFilter, setNamingFilter] = useState<NamingFilterStatus>('');
+  const [filterCounts, setFilterCounts] = useState<SongFilterCounts | null>(null);
   // 跨页选中歌曲缓存（id -> Song），支持跨页多选与「全选当前筛选全部歌曲」
   const [selectedSongsMap, setSelectedSongsMap] = useState<Map<number, Song>>(new Map());
   const [selectingAllFiltered, setSelectingAllFiltered] = useState(false);
@@ -313,9 +317,13 @@ export default function Songs() {
           transcodeStatus: transcodeFilter || undefined,
           fileType: fileTypeFilter || undefined,
           lyricsStatus: lyricsFilter || undefined,
+          namingStatus: namingFilter || undefined,
         });
         setSongs(data.items);
         setTotal(data.total);
+        if (data.filterCounts) {
+          setFilterCounts(data.filterCounts);
+        }
         setSelectedSongsMap((prev) => {
           if (prev.size === 0) return prev;
           const next = new Map(prev);
@@ -341,6 +349,7 @@ export default function Songs() {
       transcodeFilter,
       fileTypeFilter,
       lyricsFilter,
+      namingFilter,
       showToast,
     ]
   );
@@ -546,6 +555,7 @@ export default function Songs() {
         transcodeStatus: transcodeFilter || undefined,
         fileType: fileTypeFilter || undefined,
         lyricsStatus: lyricsFilter || undefined,
+        namingStatus: namingFilter || undefined,
       });
       setSelectedIds(new Set(data.items.map((s) => s.id)));
       setSelectedSongsMap(new Map(data.items.map((s) => [s.id, s])));
@@ -965,6 +975,7 @@ export default function Songs() {
     setTranscodeFilter('');
     setFileTypeFilter('');
     setLyricsFilter('');
+    setNamingFilter('');
     setPage(1);
   };
 
@@ -976,7 +987,8 @@ export default function Songs() {
     separationFilter !== '' ||
     transcodeFilter !== '' ||
     fileTypeFilter !== '' ||
-    lyricsFilter !== '';
+    lyricsFilter !== '' ||
+    namingFilter !== '';
 
   return (
     <div className="p-lg space-y-lg">
@@ -1072,12 +1084,12 @@ export default function Songs() {
                   setPage(1);
                 },
                 options: [
-                  { value: '', label: '全部' },
-                  { value: 'unparsed', label: '未解析' },
-                  { value: 'parsed', label: '已解析' },
-                  { value: 'need_review', label: '待审核' },
-                  { value: 'manual_edited', label: '已解析·人工修改' },
-                  { value: 'reviewed', label: '已审阅' },
+                  { value: '', label: '全部', count: null },
+                  { value: 'unparsed', label: '未解析', count: filterCounts?.aiParse.unparsed },
+                  { value: 'parsed', label: '已解析', count: filterCounts?.aiParse.parsed },
+                  { value: 'need_review', label: '待审核', count: filterCounts?.aiParse.need_review },
+                  { value: 'manual_edited', label: '已解析·人工修改', count: filterCounts?.aiParse.manual_edited },
+                  { value: 'reviewed', label: '已审阅', count: filterCounts?.aiParse.reviewed },
                 ],
               },
               {
@@ -1088,11 +1100,11 @@ export default function Songs() {
                   setPage(1);
                 },
                 options: [
-                  { value: '', label: '全部' },
-                  { value: 'none', label: '未开始' },
-                  { value: 'processing', label: '处理中' },
-                  { value: 'completed', label: '已完成' },
-                  { value: 'failed', label: '失败' },
+                  { value: '', label: '全部', count: null },
+                  { value: 'none', label: '未开始', count: filterCounts?.separation.none },
+                  { value: 'processing', label: '处理中', count: filterCounts?.separation.processing },
+                  { value: 'completed', label: '已完成', count: filterCounts?.separation.completed },
+                  { value: 'failed', label: '失败', count: filterCounts?.separation.failed },
                 ],
               },
               {
@@ -1103,12 +1115,12 @@ export default function Songs() {
                   setPage(1);
                 },
                 options: [
-                  { value: '', label: '全部' },
-                  { value: 'none', label: '未转码' },
-                  { value: 'pending', label: '待处理' },
-                  { value: 'processing', label: '处理中' },
-                  { value: 'completed', label: '已完成' },
-                  { value: 'failed', label: '失败' },
+                  { value: '', label: '全部', count: null },
+                  { value: 'none', label: '未转码', count: filterCounts?.transcode.none },
+                  { value: 'pending', label: '待处理', count: filterCounts?.transcode.pending },
+                  { value: 'processing', label: '处理中', count: filterCounts?.transcode.processing },
+                  { value: 'completed', label: '已完成', count: filterCounts?.transcode.completed },
+                  { value: 'failed', label: '失败', count: filterCounts?.transcode.failed },
                 ],
               },
               {
@@ -1119,9 +1131,9 @@ export default function Songs() {
                   setPage(1);
                 },
                 options: [
-                  { value: '', label: '全部' },
-                  { value: 'audio', label: '音频' },
-                  { value: 'video', label: '视频 (MV)' },
+                  { value: '', label: '全部', count: null },
+                  { value: 'audio', label: '音频', count: filterCounts?.fileType.audio },
+                  { value: 'video', label: '视频 (MV)', count: filterCounts?.fileType.video },
                 ],
               },
               {
@@ -1132,12 +1144,25 @@ export default function Songs() {
                   setPage(1);
                 },
                 options: [
-                  { value: '', label: '全部' },
-                  { value: 'has_lyrics', label: '有歌词' },
-                  { value: 'no_lyrics', label: '无歌词' },
+                  { value: '', label: '全部', count: null },
+                  { value: 'has_lyrics', label: '有歌词', count: filterCounts?.lyrics.has_lyrics },
+                  { value: 'no_lyrics', label: '无歌词', count: filterCounts?.lyrics.no_lyrics },
                 ],
               },
-            ] as const
+              {
+                label: '文件命名',
+                value: namingFilter,
+                onChange: (v: string) => {
+                  setNamingFilter(v as NamingFilterStatus);
+                  setPage(1);
+                },
+                options: [
+                  { value: '', label: '全部', count: null },
+                  { value: 'unstandardized', label: '未规范命名', count: filterCounts?.naming.unstandardized },
+                  { value: 'standardized', label: '已规范命名 (歌手-标题)', count: filterCounts?.naming.standardized },
+                ],
+              },
+            ]
           ).map((row) => (
             <div key={row.label} className="flex items-start gap-sm">
               <span className="text-xs font-medium text-ink-2 pt-1.5 shrink-0 w-16 text-right">
@@ -1160,6 +1185,9 @@ export default function Songs() {
                       aria-pressed={isSelected}
                     >
                       {opt.label}
+                      {opt.count != null && (
+                        <span className="ml-1 opacity-60">{opt.count}</span>
+                      )}
                     </button>
                   );
                 })}

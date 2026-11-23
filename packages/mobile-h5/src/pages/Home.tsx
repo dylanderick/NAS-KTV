@@ -6,13 +6,15 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { songsApi, categoriesApi } from '../api';
 import { useRoomStore } from '../stores/room';
+import { useQueueStore } from '../stores/queue';
+import { sendPlayerCommand } from '../hooks/usePlayerCommand';
 import BottomNav from '../components/BottomNav';
 import NowPlayingBar from '../components/NowPlayingBar';
 import SongItem from '../components/SongItem';
 import EmptyState from '../components/EmptyState';
 import Skeleton from '../components/Skeleton';
 import type { Song, CategoryGroup } from '@nasktv/shared';
-import { Search, Flame, ChevronRight, Disc3, LayoutGrid, Shuffle, X } from 'lucide-react';
+import { Search, Flame, ChevronRight, Disc3, LayoutGrid, Shuffle, X, QrCode, Eye, EyeOff } from 'lucide-react';
 import { saveNickname, randomNickname } from '../utils/nickname';
 
 const css = `
@@ -419,6 +421,12 @@ function GreetingSkeleton() {
 export default function Home() {
   const navigate = useNavigate();
   const { roomCode, nickname, setNickname } = useRoomStore();
+  const { tvQrVisible, setTvQrVisible } = useQueueStore();
+  const handleToggleTvQr = () => {
+    const next = !tvQrVisible;
+    setTvQrVisible(next);
+    sendPlayerCommand({ command: 'set_qr_visible', value: next });
+  };
   const [hotSongs, setHotSongs] = useState<Song[]>([]);
   const [categories, setCategories] = useState<CategoryGroup[]>([]);
   const [loading, setLoading] = useState(true);
@@ -470,7 +478,31 @@ export default function Home() {
           <GreetingSkeleton />
         ) : (
           <header className="home-hero">
-            <span className="home-room-code">房间 · {roomCode}</span>
+            <div className="flex items-center justify-between gap-sm">
+              <span className="home-room-code">房间 · {roomCode}</span>
+              <button
+                onClick={handleToggleTvQr}
+                type="button"
+                aria-pressed={tvQrVisible}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '5px 12px',
+                  borderRadius: '9999px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  border: '1px solid var(--color-border)',
+                  backgroundColor: tvQrVisible ? 'var(--color-accent-soft)' : 'var(--color-paper)',
+                  color: tvQrVisible ? 'var(--color-accent)' : 'var(--color-ink-2)',
+                  cursor: 'pointer',
+                }}
+              >
+                <QrCode size={14} />
+                <span>电视二维码：{tvQrVisible ? '显示' : '隐藏'}</span>
+                {tvQrVisible ? <Eye size={13} /> : <EyeOff size={13} />}
+              </button>
+            </div>
             <h1 className="home-greeting">
               你好，
               <button

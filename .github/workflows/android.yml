@@ -59,17 +59,22 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK + build-tools
+      - name: Setup Android SDK + NDK + build-tools
         run: |
-          # 注意：platforms 版本必须与 src-tauri/gen/android/app/build.gradle.kts 的
-          # compileSdk(=36) / targetSdk(=36) 一致，否则 gradle 配置阶段报
-          # "Failed to find Platform android-36" 导致 tauri build exit code 2。
-          sdkmanager "ndk;26.1.10909125" "platforms;android-36" "build-tools;34.0.0"
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(which sdkmanager || find "$ANDROID_HOME" -name sdkmanager -type f | head -n1)"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;26.1.10909125" "platforms;android-36" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
@@ -87,29 +92,9 @@ jobs:
             node scripts/set-version.mjs
           fi
 
-      - name: Build APK
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CI: true
-          # cargo-ndk 需要 NDK major version 来确定 ABI / 链接方式
-          CARGO_NDK_VERSION: 26
-        run: |
-          # 直接调用 tauri CLI 的 android build 子命令。
-          # 不用 tauri-action 的 includeAndroid + args 转发：它最终会把命令拼成
-          # `tauri build -- --target <triple> --apk`（桌面模式），而 --apk 在
-          # 桌面模式下是非法参数，导致 exit code 2。
-          # 命令与 AGENTS.md 一致：pnpm exec tauri android build --target <triple> --apk
-          # （packages/tv-app 的 package.json 有 "tauri": "tauri" 脚本，
-          #  用 pnpm exec 直接调二进制可避免经 npm 脚本错拼子命令。）
-          cd packages/tv-app
-          # 注意：tauri android build --target 只接受简化名（aarch64/armv7/i686/x86_64），
-          # 不接受 Rust/NDK 三元组（aarch64-linux-android）。
-          pnpm exec tauri android build --target ${{ matrix.tauriTarget }} --apk
-
       # 为 release APK 生成 debug keystore（~/.android/debug.keystore）。
       # gradle 的 release buildType 已配置 signingConfig = debug（见 build.gradle.kts），
-      # 自动引用此 keystore。若不预先存在，gradle 签名步骤会失败。
+      # 自动引用此 keystore。必须在 Build APK 前生成，否则 gradle 签名步骤可能因文件不存在失败。
       - name: Generate debug keystore
         run: |
           mkdir -p ~/.android
@@ -122,6 +107,16 @@ jobs:
               -dname "CN=NASKTV CI, O=NASKTV, C=CN"
           fi
           echo "✅ debug keystore ready: $(ls -la ~/.android/debug.keystore)"
+
+      - name: Build APK
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI: true
+          CARGO_NDK_VERSION: 26
+        run: |
+          cd packages/tv-app
+          pnpm exec tauri android build --target ${{ matrix.tauriTarget }} --apk
 
       - name: Prepare APK
         run: |

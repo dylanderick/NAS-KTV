@@ -15,10 +15,12 @@ import Visualizer from '../components/Visualizer';
 import LyricsDisplay from '../components/LyricsDisplay';
 import RemoteFeedback from '../components/RemoteFeedback';
 import ProgressBar from '../components/ProgressBar';
-import { ListMusic, Pause, UserRound, Loader2, Mic, VolumeX, type LucideIcon } from 'lucide-react';
+import { ListMusic, Pause, UserRound, Loader2, Mic, VolumeX, QrCode, type LucideIcon } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import QRCodeLib from 'qrcode';
 import client from '../api/client';
+import { wsClient } from '../ws/client';
+import { WsMessageType, type PlayerCommandPayload } from '@nasktv/shared';
 
 const css = `
 /* 全屏基础 */
@@ -293,6 +295,7 @@ export default function NowPlaying() {
   // 二维码本地生成（data URL），避免跨域图片被 CORP 拦截（ERR_BLOCKED_BY_RESPONSE.NotSameOrigin）
   const [songQrSrc, setSongQrSrc] = useState('');
   const [configQrSrc, setConfigQrSrc] = useState('');
+  const [qrVisible, setQrVisible] = useState(true);
   const [feedback, setFeedback] = useState<{ icon?: LucideIcon; text?: string; progress?: number; tick: number } | null>(null);
   const navigate = useNavigate();
   const joinTicket = useJoinTicket(room, authorized);
@@ -391,68 +394,112 @@ export default function NowPlaying() {
     };
   }, [configQrUrl]);
 
-  // 扫码二维码尺寸改为视口自适应（TV 大屏不再固定 112/96px）；用 vmin 而非 clamp/min/max，兼容旧 Android WebView（Chrome<79 不支持 clamp）
-  const QR_SIZE = '18vmin';
+  // 监听手机 H5 控制的二维码显隐指令（TV_QR_VISIBILITY 广播及 PLAYER_COMMAND 兜底）
+  useEffect(() => {
+    const unsubVis = wsClient.on(WsMessageType.TV_QR_VISIBILITY, (msg) => {
+      const payload = (msg.payload ?? {}) as { visible?: boolean };
+      if (typeof payload.visible === 'boolean') {
+        setQrVisible((prev) => {
+          if (prev !== payload.visible) {
+            showFeedback(QrCode, payload.visible ? '已显示二维码' : '已隐藏二维码');
+          }
+          return payload.visible!;
+        });
+      }
+    });
+    const unsubCmd = wsClient.on(WsMessageType.PLAYER_COMMAND, (msg) => {
+      const payload = (msg.payload ?? {}) as PlayerCommandPayload;
+      if (payload.command === 'set_qr_visible' && typeof payload.value === 'boolean') {
+        setQrVisible((prev) => {
+          if (prev !== payload.value) {
+            showFeedback(QrCode, payload.value ? '已显示二维码' : '已隐藏二维码');
+          }
+          return Boolean(payload.value);
+        });
+      } else if (payload.command === 'toggle_qr_visible') {
+        setQrVisible((prev) => {
+          const next = !prev;
+          showFeedback(QrCode, next ? '已显示二维码' : '已隐藏二维码');
+          return next;
+        });
+      }
+    });
+    return () => {
+      unsubVis();
+      unsubCmd();
+    };
+  }, [showFeedback]);
 
-  const qrBadge = qrText ? (
-    <div className="qr-badge fixed top-2xl right-2xl z-40 flex flex-row items-center gap-lg rounded-xl p-md shadow-lg"
+  // 扫码二维码浮层整体缩小 1/3（原 18vmin -> 12vmin，内边距/文字/间距同步缩小 1/3）
+  const QR_SIZE = '12vmin';
+
+  const qrBadge = qrVisible && qrText ? (
+    <div
+      className="qr-badge fixed top-xl right-xl z-40 flex flex-row items-center rounded-lg shadow-lg"
       style={{
+        padding: '10px 12px',
+        gap: '12px',
         background: 'linear-gradient(135deg, rgba(5,12,19,0.85) 0%, rgba(2,4,5,0.65) 100%)',
-        border: '2px solid rgba(0,178,222,0.55)',
-        boxShadow: '0 0 30px rgba(0,178,222,0.35), inset 0 0 12px rgba(0,178,222,0.12)'
-      }}>
+        border: '1.5px solid rgba(0,178,222,0.55)',
+        boxShadow: '0 0 20px rgba(0,178,222,0.35), inset 0 0 8px rgba(0,178,222,0.12)',
+      }}
+    >
       {/* 点歌二维码 */}
-      <div className="flex flex-col items-center gap-sm">
-        <p className="text-sm font-medium text-accent">手机扫码点歌</p>
+      <div className="flex flex-col items-center" style={{ gap: '4px' }}>
+        <p className="font-medium text-accent" style={{ fontSize: '11px', lineHeight: 1.2 }}>
+          手机扫码点歌
+        </p>
         {songQrSrc ? (
           <img
             src={songQrSrc}
             alt="手机扫码点歌"
-            style={{ width: QR_SIZE, height: QR_SIZE, imageRendering: 'pixelated' }}
-            className="rounded-sm bg-paper p-xs"
+            style={{ width: QR_SIZE, height: QR_SIZE, padding: '3px', imageRendering: 'pixelated' }}
+            className="rounded-sm bg-paper"
           />
         ) : (
           <div
-            className="flex items-center justify-center bg-paper rounded-sm p-xs"
-            style={{ width: QR_SIZE, height: QR_SIZE }}
+            className="flex items-center justify-center bg-paper rounded-sm"
+            style={{ width: QR_SIZE, height: QR_SIZE, padding: '3px' }}
           >
-            <Loader2 className="w-6 h-6 text-ink-2 animate-spin" />
+            <Loader2 className="w-4 h-4 text-ink-2 animate-spin" />
           </div>
         )}
-        <p className="text-xs font-mono tracking-widest text-ink-3">
+        <p className="font-mono tracking-wider text-ink-3" style={{ fontSize: '10px', lineHeight: 1.2 }}>
           授权码: {joinTicket?.authorizationCode ?? '更新中'}
         </p>
       </div>
 
       {/* 垂直分隔线 */}
-      <div className="self-stretch w-px min-h-[88px]" style={{ background: 'rgba(0,178,222,0.25)' }} />
+      <div className="self-stretch w-px min-h-[58px]" style={{ background: 'rgba(0,178,222,0.25)' }} />
 
       {/* 配置二维码 */}
-      <div className="flex flex-col items-center gap-sm">
-        <p className="text-sm font-medium text-accent">扫码配置 TV</p>
+      <div className="flex flex-col items-center" style={{ gap: '4px' }}>
+        <p className="font-medium text-accent" style={{ fontSize: '11px', lineHeight: 1.2 }}>
+          扫码配置 TV
+        </p>
         {configQrSrc ? (
           <img
             src={configQrSrc}
             alt="扫码配置 TV"
-            style={{ width: QR_SIZE, height: QR_SIZE, imageRendering: 'pixelated' }}
-            className="rounded-sm bg-paper p-xs"
+            style={{ width: QR_SIZE, height: QR_SIZE, padding: '3px', imageRendering: 'pixelated' }}
+            className="rounded-sm bg-paper"
           />
         ) : configQrError ? (
           <div
-            className="flex items-center justify-center bg-paper rounded-sm p-xs text-center"
-            style={{ width: QR_SIZE, height: QR_SIZE }}
+            className="flex items-center justify-center bg-paper rounded-sm text-center"
+            style={{ width: QR_SIZE, height: QR_SIZE, padding: '3px' }}
           >
-            <span className="text-ink-3 text-xs">{configQrError}</span>
+            <span className="text-ink-3" style={{ fontSize: '10px' }}>{configQrError}</span>
           </div>
         ) : (
           <div
             className="flex items-center justify-center bg-paper rounded-sm"
             style={{ width: QR_SIZE, height: QR_SIZE }}
           >
-            <Loader2 className="w-6 h-6 text-ink-2 animate-spin" />
+            <Loader2 className="w-4 h-4 text-ink-2 animate-spin" />
           </div>
         )}
-        <p className="text-xs text-ink-3">配置后端地址</p>
+        <p className="text-ink-3" style={{ fontSize: '10px', lineHeight: 1.2 }}>配置后端地址</p>
       </div>
     </div>
   ) : null;

@@ -60,6 +60,17 @@ export type TranscodeFilterStatus =
 
 export type FileTypeFilter = '' | 'audio' | 'video';
 export type LyricsFilterStatus = '' | 'has_lyrics' | 'no_lyrics';
+export type NamingFilterStatus = '' | 'unstandardized' | 'standardized';
+
+export interface SongFilterCounts {
+  total: number;
+  aiParse: Record<Exclude<AiParseFilterStatus, ''>, number>;
+  separation: Record<Exclude<SeparationFilterStatus, ''>, number>;
+  transcode: Record<Exclude<TranscodeFilterStatus, ''>, number>;
+  fileType: Record<Exclude<FileTypeFilter, ''>, number>;
+  lyrics: Record<Exclude<LyricsFilterStatus, ''>, number>;
+  naming: Record<Exclude<NamingFilterStatus, ''>, number>;
+}
 
 export interface SongListParams {
   page?: number;
@@ -73,6 +84,7 @@ export interface SongListParams {
   transcodeStatus?: Exclude<TranscodeFilterStatus, ''>;
   fileType?: Exclude<FileTypeFilter, ''>;
   lyricsStatus?: Exclude<LyricsFilterStatus, ''>;
+  namingStatus?: Exclude<NamingFilterStatus, ''>;
 }
 
 export interface SongListResponse {
@@ -80,6 +92,7 @@ export interface SongListResponse {
   total: number;
   page: number;
   pageSize: number;
+  filterCounts?: SongFilterCounts;
 }
 
 export interface Artist {

@@ -18,6 +18,7 @@ export enum WsMessageType {
   // TV 端应用后广播最新状态（MIC_VOLUME_STATE）给房间内所有客户端同步显示。
   MIC_VOLUME_CMD = 'MIC_VOLUME_CMD',
   MIC_VOLUME_STATE = 'MIC_VOLUME_STATE',
+  TV_QR_VISIBILITY = 'TV_QR_VISIBILITY',
 
   // 心跳检测：客户端发 PING，服务端回 PONG
   PING = 'PING',
@@ -136,7 +137,9 @@ export type PlayerCommandName =
   | 'adjust_pitch'
   | 'adjust_vocal_assist_volume'
   | 'adjust_instrumental_volume'
-  | 'adjust_lyric_offset';
+  | 'adjust_lyric_offset'
+  | 'set_qr_visible'
+  | 'toggle_qr_visible';
 
 export interface ReverbCustomParams {
   duration: number; // 混响时长秒 0.5~5
@@ -149,7 +152,7 @@ export interface PlayerCommandPayload {
   // set_reverb_preset 为 'hall' | 'room' | 'stage' | 'off'；
   // set_reverb_custom 为 { duration, decay }（自定义混响参数）；
   // set_vocal_mode 为 'original' | 'instrumental' | 'vocal_assist'
-  value?: number | string | ReverbCustomParams;
+  value?: number | string | boolean | ReverbCustomParams;
   userSessionId?: string;
 }
 
@@ -368,4 +371,8 @@ export interface RoomStateSnapshotPayload {
   queueVersion: number;
   playerState: PlayerStatePayload | null;
   serverTime: number;
+}
+
+export interface TvQrVisibilityPayload {
+  visible: boolean;
 }

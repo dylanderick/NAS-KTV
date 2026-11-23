@@ -21,6 +21,9 @@ interface QueueStore {
   // 全局遥控浮层开关
   remoteOpen: boolean;
 
+  // TV 端右上角二维码显隐状态
+  tvQrVisible: boolean;
+
   // Actions
   setQueue: (queue: QueueListItem[]) => void;
   setCurrentItem: (item: QueueListItem | null) => void;
@@ -30,6 +33,7 @@ interface QueueStore {
   setLoading: (loading: boolean) => void;
   openRemote: () => void;
   closeRemote: () => void;
+  setTvQrVisible: (visible: boolean) => void;
 
   // Optimistic update
   addOptimistic: (item: QueueListItem) => void;
@@ -44,6 +48,7 @@ export const useQueueStore = create<QueueStore>((set) => ({
   currentLyricIndex: 0,
   loading: false,
   remoteOpen: false,
+  tvQrVisible: true,
 
   setQueue: (queue) => set({ queue }),
   setCurrentItem: (currentItem) => set({ currentItem }),
@@ -53,6 +58,7 @@ export const useQueueStore = create<QueueStore>((set) => ({
   setLoading: (loading) => set({ loading }),
   openRemote: () => set({ remoteOpen: true }),
   closeRemote: () => set({ remoteOpen: false }),
+  setTvQrVisible: (tvQrVisible) => set({ tvQrVisible }),
 
   addOptimistic: (item) => set((state) => ({
     queue: [...state.queue, item]

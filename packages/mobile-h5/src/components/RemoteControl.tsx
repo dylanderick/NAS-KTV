@@ -629,6 +629,8 @@ export default function RemoteControl() {
     remoteOpen,
     openRemote,
     closeRemote,
+    tvQrVisible,
+    setTvQrVisible,
   } = useQueueStore();
   const [lyrics, setLyrics] = useState<LyricLine[]>([]);
 
@@ -1342,6 +1344,35 @@ export default function RemoteControl() {
                       麦克风不可用（电视端未授权或无麦克风设备）
                     </p>
                   )}
+
+                  {/* 电视端右上角二维码显隐控制 */}
+                  <div className="np-tune-row" style={{ marginTop: 'var(--space-md)' }}>
+                    <div className="np-tune-group">
+                      <span className="np-tune-label">电视二维码</span>
+                      <button
+                        onClick={() => {
+                          setTvQrVisible(true);
+                          sendPlayerCommand({ command: 'set_qr_visible', value: true });
+                        }}
+                        className={`np-reverb-chip${tvQrVisible ? ' is-active' : ''}`}
+                        aria-pressed={tvQrVisible}
+                        type="button"
+                      >
+                        显示
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTvQrVisible(false);
+                          sendPlayerCommand({ command: 'set_qr_visible', value: false });
+                        }}
+                        className={`np-reverb-chip${!tvQrVisible ? ' is-active' : ''}`}
+                        aria-pressed={!tvQrVisible}
+                        type="button"
+                      >
+                        隐藏
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </section>
             )}

@@ -65,6 +65,7 @@ router.get('/', async (req: Request, res: Response) => {
     const transcodeStatus = (req.query.transcodeStatus as songService.TranscodeFilterStatus | undefined) || undefined;
     const fileType = (req.query.fileType as songService.FileTypeFilter | undefined) || undefined;
     const lyricsStatus = (req.query.lyricsStatus as songService.LyricsFilterStatus | undefined) || undefined;
+    const namingStatus = (req.query.namingStatus as songService.NamingFilterStatus | undefined) || undefined;
 
     const result = await songService.getSongs({
       page,
@@ -78,6 +79,7 @@ router.get('/', async (req: Request, res: Response) => {
       transcodeStatus,
       fileType,
       lyricsStatus,
+      namingStatus,
     });
     res.json({ success: true, data: result });
   } catch (error) {

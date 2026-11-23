@@ -78,6 +78,17 @@ export type TranscodeFilterStatus =
 
 export type FileTypeFilter = 'audio' | 'video';
 export type LyricsFilterStatus = 'has_lyrics' | 'no_lyrics';
+export type NamingFilterStatus = 'unstandardized' | 'standardized';
+
+export interface SongFilterCounts {
+  total: number;
+  aiParse: Record<AiParseFilterStatus, number>;
+  separation: Record<SeparationFilterStatus, number>;
+  transcode: Record<TranscodeFilterStatus, number>;
+  fileType: Record<FileTypeFilter, number>;
+  lyrics: Record<LyricsFilterStatus, number>;
+  naming: Record<NamingFilterStatus, number>;
+}
 
 export interface GetSongsParams {
   page?: number;
@@ -97,6 +108,162 @@ export interface GetSongsParams {
   fileType?: FileTypeFilter;
   /** 歌词状态（has_lyrics / no_lyrics，全库筛选） */
   lyricsStatus?: LyricsFilterStatus;
+  /** 文件命名规范状态（unstandardized / standardized，全库筛选） */
+  namingStatus?: NamingFilterStatus;
+}
+
+
+/**
+ * 判断歌曲当前文件名是否已符合「歌手-标题.后缀」规范命名
+ * （若歌手为空或为「未知歌手」，或当前文件名与「歌手-标题.后缀」不一致，则视为未规范命名）
+ */
+export function isSongStandardNamed(
+  song: { title: string | null; filePath: string | null; artistName?: string | null },
+  artistNamesList?: string[],
+): boolean {
+  const fp = (song.filePath || '').trim();
+  if (!fp) return false;
+  const rawArtists =
+    artistNamesList && artistNamesList.length > 0
+      ? artistNamesList
+      : song.artistName
+        ? [song.artistName]
+        : [];
+  const validArtists = rawArtists
+    .map((n) => sanitizeFilenamePart(n))
+    .filter((n) => n.length > 0 && n !== UNKNOWN_ARTIST_NAME);
+  const cleanTitle = sanitizeFilenamePart(song.title || '');
+  if (validArtists.length === 0 || !cleanTitle) return false;
+
+  const ext = path.extname(fp);
+  const currentBase = path.basename(fp, ext);
+  const expectedBase = `${validArtists.join('、')}-${cleanTitle}`;
+  if (currentBase === expectedBase) return true;
+  if (currentBase.startsWith(`${expectedBase} (`) && /^\(\d+\)$/.test(currentBase.slice(expectedBase.length + 1))) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * 统计全库各筛选维度的歌曲数量，并返回未规范命名/已规范命名的歌曲 ID 列表
+ */
+export function computeSongFilterCountsAndNamingIds(): {
+  counts: SongFilterCounts;
+  unstandardizedIds: number[];
+  standardizedIds: number[];
+} {
+  const rows = db
+    .select({
+      id: songs.id,
+      title: songs.title,
+      filePath: songs.filePath,
+      fileType: songs.fileType,
+      lyricsPath: songs.lyricsPath,
+      aiParsed: songs.aiParsed,
+      aiNeedReview: songs.aiNeedReview,
+      aiManualEdited: songs.aiManualEdited,
+      separationStatus: songs.separationStatus,
+      transcodeStatus: songs.transcodeStatus,
+      artistName: artists.name,
+    })
+    .from(songs)
+    .leftJoin(artists, eq(songs.artistId, artists.id))
+    .all();
+
+  const allIds = rows.map((r) => r.id);
+  const artistNamesMap = getArtistNamesBySong(allIds);
+
+  const counts: SongFilterCounts = {
+    total: rows.length,
+    aiParse: {
+      unparsed: 0,
+      parsed: 0,
+      need_review: 0,
+      manual_edited: 0,
+      reviewed: 0,
+    },
+    separation: {
+      none: 0,
+      processing: 0,
+      completed: 0,
+      failed: 0,
+    },
+    transcode: {
+      none: 0,
+      pending: 0,
+      processing: 0,
+      completed: 0,
+      failed: 0,
+    },
+    fileType: {
+      audio: 0,
+      video: 0,
+    },
+    lyrics: {
+      has_lyrics: 0,
+      no_lyrics: 0,
+    },
+    naming: {
+      unstandardized: 0,
+      standardized: 0,
+    },
+  };
+
+  const unstandardizedIds: number[] = [];
+  const stdList: number[] = [];
+
+  for (const r of rows) {
+    const ap = r.aiParsed ?? 0;
+    if (ap === 0) {
+      counts.aiParse.unparsed++;
+    } else if (ap === 1) {
+      counts.aiParse.parsed++;
+      if (r.aiManualEdited === 1) {
+        counts.aiParse.manual_edited++;
+      }
+    } else if (ap === 2) {
+      if (r.aiNeedReview === 1) {
+        counts.aiParse.need_review++;
+      } else {
+        counts.aiParse.reviewed++;
+      }
+    }
+
+    const sep = r.separationStatus || '';
+    if (sep === 'completed') counts.separation.completed++;
+    else if (sep === 'processing') counts.separation.processing++;
+    else if (sep === 'failed') counts.separation.failed++;
+    else counts.separation.none++;
+
+    const ft = (r.fileType || '').toLowerCase();
+    const tc = r.transcodeStatus || '';
+    if (tc === 'completed') counts.transcode.completed++;
+    else if (tc === 'processing') counts.transcode.processing++;
+    else if (tc === 'pending') counts.transcode.pending++;
+    else if (tc === 'failed') counts.transcode.failed++;
+    else if (ft === 'video') counts.transcode.none++;
+
+    if (ft === 'video') counts.fileType.video++;
+    else if (ft === 'audio') counts.fileType.audio++;
+
+    if (r.lyricsPath && r.lyricsPath.trim().length > 0) {
+      counts.lyrics.has_lyrics++;
+    } else {
+      counts.lyrics.no_lyrics++;
+    }
+
+    const aList = artistNamesMap.get(r.id);
+    if (isSongStandardNamed(r, aList)) {
+      counts.naming.standardized++;
+      stdList.push(r.id);
+    } else {
+      counts.naming.unstandardized++;
+      unstandardizedIds.push(r.id);
+    }
+  }
+
+  return { counts, unstandardizedIds, standardizedIds: stdList };
 }
 
 export async function getSongs(params: GetSongsParams) {
@@ -112,7 +279,11 @@ export async function getSongs(params: GetSongsParams) {
     transcodeStatus,
     fileType,
     lyricsStatus,
+    namingStatus,
   } = params;
+
+  const { counts: filterCounts, unstandardizedIds, standardizedIds } =
+    computeSongFilterCountsAndNamingIds();
   const offset = (page - 1) * pageSize;
 
   const conditions = [];
@@ -234,6 +405,20 @@ export async function getSongs(params: GetSongsParams) {
     }
   }
 
+  if (namingStatus === 'unstandardized') {
+    if (unstandardizedIds.length > 0) {
+      conditions.push(inArray(songs.id, unstandardizedIds));
+    } else {
+      conditions.push(sql`1 = 0`);
+    }
+  } else if (namingStatus === 'standardized') {
+    if (standardizedIds.length > 0) {
+      conditions.push(inArray(songs.id, standardizedIds));
+    } else {
+      conditions.push(sql`1 = 0`);
+    }
+  }
+
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const countResult = await db
@@ -328,6 +513,7 @@ export async function getSongs(params: GetSongsParams) {
     total,
     page,
     pageSize,
+    filterCounts,
   };
 }
 
