@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/dylanderick/NAS-KTV/compare/v0.6.0...v0.7.0) (2026-11-23)
+
+
+### Features
+
+* **admin-web:** 歌曲管理页支持一键检测并清理源文件已删除的失效歌曲 ([73fcf42](https://github.com/dylanderick/NAS-KTV/commit/73fcf42477319d235435c3062a4208c63c53bfbe))
+* TV二维码缩小1/3与手机H5控制显隐、歌曲管理筛选显示数量与未规范命名筛选、修复CI构建 ([6715878](https://github.com/dylanderick/NAS-KTV/commit/671587860a97ac9410e85aef4a4fa9ddfab6ff2e))
+
 ## [0.6.0](https://github.com/dylanderick/NAS-KTV/compare/v0.5.0...v0.6.0) (2026-11-23)
 
 
